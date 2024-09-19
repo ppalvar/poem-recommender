@@ -1,7 +1,4 @@
 from mistralai import Mistral
-# from mistralai.client import MistralClient
-# from mistralai.models.chat_completion import ChatMessage
-
 
 def get_mistral_response(messages: str | list[str], api_key: str) -> list[str]:
     if type(messages) is str:
