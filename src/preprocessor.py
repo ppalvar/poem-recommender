@@ -21,7 +21,7 @@ class DataProcessor:
             with open(file_path, 'r', encoding='utf-8') as file:
                 return file.read()
 
-        for root, dirs, files in os.walk(self.data_path):
+        for root, dirs, files in os.walk(path):
             for file in files:
                 if file.endswith('.txt'):
                     file_path = os.path.join(root, file)
@@ -73,9 +73,19 @@ Please provide the metadata in a structured format, clearly labeling each catego
 """
     
     def generate_metadata(self, output_dir: str, api_key: str="api-key"):
-        os.makedirs('data/metadata', exist_ok=True)
+        def read_file(file_path):
+            with open(file_path, 'r', encoding='utf-8') as file:
+                return file.read()
         
-        for name, file in self.files.items():     
+        os.makedirs(output_dir, exist_ok=True)
+        
+        self.load_metadata(output_dir)
+        
+        for name, file in self.files.items():
+            if name in self.metadata:
+                print(f'Using cached metadata for file {name}.')
+                continue
+
             msg = self.get_prompt(name, file())
             response = get_mistral_response(msg, api_key)
             
@@ -84,4 +94,6 @@ Please provide the metadata in a structured format, clearly labeling each catego
             with open(path, 'w') as f:
                 f.write(response)
             
-            print(f'Successfully generated metadata for file {name}')
+            self.metadata[name] = lambda: read_file(path)
+
+            print(f'Successfully generated metadata for file {name}. Total processed={len(self.metadata)} Remaining = {len(self.files) - len(self.metadata)}')
