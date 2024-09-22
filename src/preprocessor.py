@@ -1,12 +1,17 @@
 import os
+import chardet
 from math import ceil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from src.llm_client import get_mistral_response
+
+ENCODING = 'windows-1252'
 
 class DataProcessor:
     def __init__(self, data_path: str) -> None:
         self.data_path = data_path
         self.get_txt_files_content()
+        self.metadata = None
 
     def load_metadata(self, metadata_path: str):
         self.metadata = self.__load_from_path__(metadata_path)
@@ -15,11 +20,21 @@ class DataProcessor:
         self.files = self.__load_from_path__(self.data_path)
     
     def __load_from_path__(self, path: str):
-        txt_files = {}
-        
         def read_file(file_path):
-            with open(file_path, 'r', encoding='utf-8') as file:
-                return file.read()
+            encodings = ['utf-8', 'windows-1252', 'iso-8859-1']
+            
+            for encoding in encodings:
+                try:
+                    with open(file_path, 'r', encoding=encoding) as file:
+                        return file.read()
+                except UnicodeDecodeError:
+                    continue
+            
+            # Si ninguna codificación funciona, intenta leer en modo binario y decodifica con 'replace'
+            with open(file_path, 'rb') as file:
+                return file.read().decode(errors='replace')
+            
+        txt_files = {}
 
         for root, dirs, files in os.walk(path):
             for file in files:
@@ -73,27 +88,59 @@ Please provide the metadata in a structured format, clearly labeling each catego
 """
     
     def generate_metadata(self, output_dir: str, api_key: str="api-key"):
-        def read_file(file_path):
-            with open(file_path, 'r', encoding='utf-8') as file:
-                return file.read()
-        
         os.makedirs(output_dir, exist_ok=True)
         
-        self.load_metadata(output_dir)
+        if not self.metadata:
+            self.load_metadata(output_dir)
         
         for name, file in self.files.items():
-            if name in self.metadata:
-                print(f'Using cached metadata for file {name}.')
-                continue
-
-            msg = self.get_prompt(name, file())
-            response = get_mistral_response(msg, api_key)
+            self.generate_metadata_single_file(name, file, output_dir, api_key)
+    
+    def generate_metadata_single_file(self, name: str, file, output_dir: str, api_key: str):
+        def read_file(file_path):
+            encodings = ['utf-8', 'windows-1252', 'iso-8859-1']
             
-            path = os.path.join(output_dir, name)
-
-            with open(path, 'w') as f:
-                f.write(response)
+            for encoding in encodings:
+                try:
+                    with open(file_path, 'r', encoding=encoding) as file:
+                        return file.read()
+                except UnicodeDecodeError:
+                    continue
             
-            self.metadata[name] = lambda: read_file(path)
+            # Si ninguna codificación funciona, intenta leer en modo binario y decodifica con 'replace'
+            with open(file_path, 'rb') as file:
+                return file.read().decode(errors='replace')
+        
+        if not self.metadata:
+            self.load_metadata(output_dir)
 
-            print(f'Successfully generated metadata for file {name}. Total processed={len(self.metadata)} Remaining = {len(self.files) - len(self.metadata)}')
+        if name in self.metadata:
+            print(f'Using cached metadata for file {name}.')
+            return
+
+        msg = self.get_prompt(name, file())
+        response = get_mistral_response(msg, api_key)
+        
+        path = os.path.join(output_dir, name)
+
+        with open(path, 'w') as f:
+            f.write(response)
+        
+        self.metadata[name] = lambda: read_file(path)
+
+        print(f'Successfully generated metadata for file {name}. Total processed={len(self.metadata)} Remaining = {len(self.files) - len(self.metadata)}')
+    
+    def generate_metadata_parallel(self, output_dir, api_key, max_workers=4):
+        def process_file(name):
+            return self.generate_metadata_single_file(name, self.files[name], output_dir, api_key)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_file = {executor.submit(process_file, name): name for name in self.files}
+            for future in as_completed(future_to_file):
+                name = future_to_file[future]
+                try:
+                    future.result()
+                except Exception as exc:
+                    print(f'{name} generated an exception: {exc}')
+
+        print(f'All files processed. Total: {len(self.metadata)}')

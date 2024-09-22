@@ -1,8 +1,10 @@
 import os
 import random
+import threading
 import tkinter as tk
 
 from tkinter import ttk
+from tkinter import messagebox
 from dotenv import load_dotenv
 
 from src.doc_search import DocumentSearcher
@@ -18,7 +20,7 @@ class SearchInterface:
         self.doc_searcher = doc_searcher
 
         self.master = master
-        self.master.title("Search Interface")
+        self.master.title("Poem recommender")
         self.master.geometry("600x400")
         self.master.configure(bg="#1e1e1e")
 
@@ -46,26 +48,47 @@ class SearchInterface:
         # Cuadro de texto para resultados
         self.result_text = tk.Text(self.master, wrap=tk.WORD, font=("Arial", 12), bg="#252526", fg="#ffffff", insertbackground="#ffffff")
         self.result_text.pack(pady=10, padx=20, expand=True, fill=tk.BOTH)
-
+    
     def perform_search(self):
-        self.update_search_results("Loading...")
         search_query = self.search_entry.get()
+    
+        thread = threading.Thread(target=self.search_thread, args=(search_query,))
+        thread.start()
 
-        self.update_search_results("Improving query...")
-        improved_query = get_mistral_response(self.get_query_prompt(search_query), API_KEY)
+    def search_thread(self, search_query):
+        try:
+            self.update_search_results("Loading...")
 
-        self.update_search_results("Fetching context...")
-        search_results = self.doc_searcher.search_tfidf(improved_query, 3)
+            self.update_search_results("Improving query...")
+            improved_query = get_mistral_response(self.get_query_prompt(search_query), API_KEY)
 
-        docs = [self.documents[doc['document']]() for doc in search_results]
+            self.update_search_results("Fetching context...")
+            search_results = self.doc_searcher.search_tfidf(improved_query, 3)
 
-        self.update_search_results("Generating an answer...")
-        docs = [f'{get_mistral_response(self.get_result_prompt(poem, search_query), API_KEY)}\n\t{poem}'
-                for poem in docs]
+            # docs = [self.documents[doc['document']]() for doc in search_results]
+            docs = [(name, self.documents[name]) for name in search_results]
 
-        result = '\n\n\n======================================================\n\n\n'.join(docs)
+            self.update_search_results("Generating an answer...")
+            docs = [f'# {name}{get_mistral_response(self.get_result_prompt(name, poem(), search_query), API_KEY)}\n\n{poem()}'
+                    for name, poem in docs]
+
+            result = '\n\n\n======================================================\n\n\n'.join(docs)
+            
+            # Actualiza los resultados en el hilo principal
+            self.master.after(0, lambda: self.update_search_results(result))
         
-        self.update_search_results(result)
+        except Exception as e:
+            # Maneja cualquier error que pueda ocurrir durante la búsqueda
+            self.master.after(0, lambda: messagebox.showerror("Error", str(e)))
+
+    def update_search_results(self, text):
+        # Actualiza la interfaz de usuario desde el hilo principal
+        self.master.after(0, lambda: self._update_search_results(text))
+
+    def _update_search_results(self, text):
+        # Actualiza el widget de resultados
+        self.result_text.delete(1.0, tk.END)
+        self.result_text.insert(tk.END, text)
     
     def get_query_prompt(self, user_query):
         return f"""
@@ -88,11 +111,14 @@ User input: "{user_query}"
 
 Based on this input, generate a comprehensive description of the poem the user is looking for, addressing as many of the above points as relevant. Your response should be detailed enough to guide a search for an existing poem or inspire the creation of a new one that matches the user's request.
 """
-    def get_result_prompt(self, poem_text, user_query):
+    def get_result_prompt(self, file_name, poem_text, user_query):
         return f"""
 You are a poetry expert tasked with explaining why a particular poem matches a user's request. You will be given the user's original query and the text of a recommended poem. Your job is to create a concise summary (maximum 3 sentences) that explains how the poem aligns with the user's description.
 
 User's original query: "{user_query}"
+
+File name:
+{file_name}
 
 Recommended poem:
 {poem_text}
@@ -111,6 +137,6 @@ Your summary should be clear, concise, and focused on the most relevant aspects 
 
 
 def start_interface(documents, doc_searcher):
-    root = tk.Tk()
-    app = SearchInterface(root, documents, doc_searcher)
-    root.mainloop()
+    master = tk.Tk()
+    app = SearchInterface(master, documents, doc_searcher)
+    master.mainloop()

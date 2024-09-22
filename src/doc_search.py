@@ -40,11 +40,13 @@ class DocumentSearcher:
         top_indices = similarities.argsort()[-top_n:][::-1]
         doc_names = list(self.doc_contents.keys())
         
-        results = []
-        for idx in top_indices:
-            results.append({
-                'document': doc_names[idx],
-                'similarity': similarities[idx]
-            })
+        # results = []
+        # for idx in top_indices:
+        #     results.append({
+        #         'document': doc_names[idx],
+        #         'similarity': similarities[idx]
+        #     })
+        
+        results = [doc_names[idx] for idx in top_indices]
         
         return results
